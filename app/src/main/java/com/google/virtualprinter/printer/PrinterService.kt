@@ -19,7 +19,9 @@ package com.google.virtualprinter.printer
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.SystemClock
 import android.util.Log
+import androidx.compose.runtime.getValue
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
@@ -69,6 +71,8 @@ import com.google.virtualprinter.plugins.PluginFramework
 import com.google.virtualprinter.queue.PrintJob
 import com.google.virtualprinter.queue.PrintJobQueue
 import com.google.virtualprinter.queue.PrintJobState
+import com.hp.jipp.encoding.Attribute
+import com.hp.jipp.model.JobState
 import kotlin.time.Duration.Companion.seconds
 
 class PrinterService(private val context: Context) {
@@ -394,7 +398,7 @@ class PrinterService(private val context: Context) {
                             AttributeGroup.groupOf(
                                 Tag.jobAttributes,
                                 Types.jobId.of(jobId),
-                                Types.jobState.of(7), // 7 = canceled
+                                Types.jobState.of(com.hp.jipp.model.JobState.canceled),
                                 Types.jobStateReasons.of("job-canceled-by-system")
                             )
                         )
@@ -428,6 +432,79 @@ class PrinterService(private val context: Context) {
             // Normal processing without error simulation
             return processNormalRequest(request, documentData, call)
         }
+    }
+
+    private fun extractJobInfoFromRequest(request: IppPacket): Pair<String, String> {
+        val operationAttributes =
+            request.attributeGroups.firstOrNull { it.tag == Tag.operationAttributes }
+
+        val userName =
+            operationAttributes
+                ?.getValues(Types.requestingUserName)
+                ?.firstOrNull()
+                ?.toString()
+                ?: "anonymous"
+
+        val jobName =
+            operationAttributes
+                ?.getValues(Types.jobName)
+                ?.firstOrNull()
+                ?.toString()
+                ?: "Send Document"
+
+        return Pair(userName,jobName)
+    }
+
+    private fun buildJobAttributes(
+        jobId: Int,
+        documentFormat: String,
+        jobState: JobState,
+        jobStateReason: String,
+        jobName: String,
+        userName: String,
+        printerUpTimeSeconds: Int
+    ): AttributeGroup {
+
+        val attrs = mutableListOf<Attribute<*>>()
+
+        // Always present attributes
+        attrs += Types.jobId.of(jobId)
+        attrs += Types.jobUri.of(URI("ipp://localhost:$PORT/jobs/$jobId"))
+        attrs += Types.jobState.of(jobState)
+        attrs += Types.jobStateReasons.of(jobStateReason)
+        attrs += Types.jobOriginatingUserName.of(userName)
+        attrs += Types.jobName.of(jobName)
+        attrs += Types.documentFormat.of(documentFormat)
+
+        // time-at-creation: always valid (seconds since printer boot)
+        attrs += Types.timeAtCreation.of(printerUpTimeSeconds)
+
+        // time-at-processing: only when job has started processing
+        attrs += if (jobState == JobState.processing || jobState == JobState.completed) {
+            Types.timeAtProcessing.of(printerUpTimeSeconds)
+        } else {
+            Types.timeAtProcessing.noValue()
+        }
+
+        // time-at-completed: only when job is completed
+        attrs += if (jobState == JobState.completed) {
+            Types.timeAtCompleted.of(printerUpTimeSeconds)
+        } else {
+            Types.timeAtCompleted.noValue()
+        }
+
+        // impressions-completed: reflect real progress
+        val impressionsCompleted = if (jobState == JobState.completed) {
+            1
+        } else {
+            0
+        }
+        attrs += Types.impressionsCompleted.of(impressionsCompleted)
+
+        return AttributeGroup.groupOf(
+            Tag.jobAttributes,
+            *attrs.toTypedArray()
+        )
     }
     
     private suspend fun processNormalRequest(
@@ -569,6 +646,8 @@ class PrinterService(private val context: Context) {
                         saveDocument(finalDocumentData, jobId, documentFormat)
                         
                         // Create a success response with job attributes
+                        val (userName, jobName) = extractJobInfoFromRequest(request)
+                        val printerUpTimeSeconds = (SystemClock.elapsedRealtime() / 1000).toInt()
                         val response = IppPacket(
                             Status.successfulOk,
                             request.requestId,
@@ -577,12 +656,14 @@ class PrinterService(private val context: Context) {
                                 Types.attributesCharset.of("utf-8"),
                                 Types.attributesNaturalLanguage.of("en")
                             ),
-                            AttributeGroup.groupOf(
-                                Tag.jobAttributes,
-                                Types.jobId.of(jobId.toInt()),
-                                Types.jobUri.of(URI("ipp://localhost:$PORT/jobs/$jobId")),
-                                Types.jobState.of(5), // 5 = processing
-                                Types.jobStateReasons.of("processing-to-stop-point")
+                            buildJobAttributes(
+                                jobId = jobId.toInt(),
+                                documentFormat = documentFormat,
+                                jobState = JobState.completed,
+                                jobStateReason = "job-completed-successfully",
+                                jobName = jobName,
+                                userName = userName,
+                                printerUpTimeSeconds = printerUpTimeSeconds
                             )
                         )
                         logger.i(LogCategory.PRINT_JOB, TAG, "Accepted Print-Job", jobId = jobId,
@@ -596,6 +677,46 @@ class PrinterService(private val context: Context) {
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error processing Print-Job request", e)
+                    IppPacket(Status.serverErrorInternalError, request.requestId)
+                }
+            }
+            Operation.getJobAttributes.code -> { // Get-Job-Attributes operation
+                try {
+                    val jobId = request.attributeGroups
+                        .find { it.tag == Tag.operationAttributes }
+                        ?.getValues(Types.jobId)
+                        ?.firstOrNull()
+                    if (jobId == null) {
+                        IppPacket(Status.clientErrorBadRequest, request.requestId)
+                    } else {
+                        // Return job attributes with COMPLETED state
+                        val (userName, jobName) = extractJobInfoFromRequest(request)
+                        val printerUpTimeSeconds = (SystemClock.elapsedRealtime() / 1000).toInt()
+
+                        val response = IppPacket(
+                            Status.successfulOk,
+                            request.requestId,
+                            AttributeGroup.groupOf(
+                                Tag.operationAttributes,
+                                Types.attributesCharset.of("utf-8"),
+                                Types.attributesNaturalLanguage.of("en")
+                            ),
+                            buildJobAttributes(
+                                jobId = jobId,
+                                documentFormat = "application/pdf",
+                                jobState = JobState.completed,
+                                jobStateReason = "job-completed-successfully",
+                                jobName = "Print Job $jobId",
+                                userName = userName,
+                                printerUpTimeSeconds = printerUpTimeSeconds
+                            )
+                        )
+                        Log.d(TAG, "Get-Job-Attributes for job $jobId: returning COMPLETED state")
+                        response
+                    }
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing Get-Job-Attributes request", e)
                     IppPacket(Status.serverErrorInternalError, request.requestId)
                 }
             }
@@ -701,6 +822,9 @@ class PrinterService(private val context: Context) {
                         saveDocument(finalDocumentData, actualJobId, documentFormat)
                         
                         // Create a success response with job attributes
+                        val (userName, jobName) = extractJobInfoFromRequest(request)
+                        val printerUpTimeSeconds = (SystemClock.elapsedRealtime() / 1000).toInt()
+
                         val response = IppPacket(
                             Status.successfulOk,
                             request.requestId,
@@ -709,12 +833,16 @@ class PrinterService(private val context: Context) {
                                 Types.attributesCharset.of("utf-8"),
                                 Types.attributesNaturalLanguage.of("en")
                             ),
-                            AttributeGroup.groupOf(
-                                Tag.jobAttributes,
-                                Types.jobId.of(actualJobId.toInt()),
-                                Types.jobUri.of(URI("ipp://localhost:$PORT/jobs/$actualJobId")),
-                                Types.jobState.of(if (isLastDocument) 9 else 4), // 9 = completed, 4 = processing
-                                Types.jobStateReasons.of(if (isLastDocument) "job-completed-successfully" else "job-incoming")
+                            buildJobAttributes(
+                                jobId = actualJobId.toInt(),
+                                documentFormat = documentFormat,
+                                jobState =
+                                    if (isLastDocument) JobState.completed else JobState.processing,
+                                jobStateReason =
+                                    if (isLastDocument) "job-completed-successfully" else "job-incoming",
+                                jobName = jobName,
+                                userName = userName,
+                                printerUpTimeSeconds = printerUpTimeSeconds
                             )
                         )
                         
@@ -751,7 +879,7 @@ class PrinterService(private val context: Context) {
                             Tag.jobAttributes,
                             Types.jobId.of(jobId.toInt()),
                             Types.jobUri.of(URI("ipp://localhost:$PORT/jobs/$jobId")),
-                            Types.jobState.of(3), // 3 = pending
+                            Types.jobState.of(com.hp.jipp.model.JobState.pending),
                             Types.jobStateReasons.of("none")
                         )
                     )
