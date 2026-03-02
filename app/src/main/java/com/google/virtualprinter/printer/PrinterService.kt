@@ -1043,7 +1043,7 @@ class PrinterService(private val context: Context) {
             Types.uriAuthenticationSupported.of("none"),
             
             // Compression support (required)
-            Types.compressionSupported.of("none"),
+            Types.compressionSupported.of(PreferenceUtils.getCompressionSupported(context)),
             
             // PDL override support (required)
             Types.pdlOverrideSupported.of("not-attempted"),
