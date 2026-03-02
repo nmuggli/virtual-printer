@@ -1240,7 +1240,7 @@ class PrinterService(private val context: Context) {
      */
     private fun saveIppAttributes(jobId: Int, attributeGroups: List<AttributeGroup>, operationName: String) {
         try {
-            val attrDir = File(context.filesDir, "ipp_attributes").apply {
+            val attrDir = File(context.filesDir, "saved_ipp_attributes").apply {
                 if (!exists()) mkdirs()
             }
 
@@ -1272,7 +1272,12 @@ class PrinterService(private val context: Context) {
         try {
             // Log incoming document format
             Log.d(TAG, "Saving document with format: $documentFormat and size: ${docBytes.size} bytes")
-            
+
+            // Save the exact bytes received from the client for debugging/logging
+            val originalFile = File(printJobsDirectory, "print_job_${jobId}.ipp")
+            FileOutputStream(originalFile).use { it.write(docBytes) }
+            Log.d(TAG, "Saved exact client bytes to: ${originalFile.absolutePath}")
+
             // First, try to extract actual document content from IPP wrapper
             val extractedContent = extractDocumentFromIPP(docBytes)
             if (extractedContent != null) {
