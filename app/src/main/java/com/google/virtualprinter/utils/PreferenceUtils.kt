@@ -34,6 +34,7 @@ object PreferenceUtils {
     private const val CONFIG_FILE_NAME = "printer_config.json"
     private const val KEY_CONFIG_PRINTER_NAME = "printer_name"
     private const val KEY_CONFIG_SUPPORTED_FORMATS = "supported_formats"
+    private const val KEY_CONFIG_COMPRESSION_SUPPORTED = "compression_supported"
 
     private val DEFAULT_SUPPORTED_FORMATS = listOf(
         "application/pdf",
@@ -121,6 +122,34 @@ object PreferenceUtils {
             }
         }
         return DEFAULT_SUPPORTED_FORMATS
+    }
+
+    /**
+     * Gets the list of supported compression algorithms.
+     * Checks the configuration file first, then falls back to defaults.
+     */
+    fun getCompressionSupported(context: Context): List<String> {
+        val configFile = File(context.filesDir, CONFIG_FILE_NAME)
+        if (configFile.exists()) {
+            try {
+                val content = configFile.readText()
+                val json = JSONObject(content)
+                if (json.has(KEY_CONFIG_COMPRESSION_SUPPORTED)) {
+                    val compressionArray = json.getJSONArray(KEY_CONFIG_COMPRESSION_SUPPORTED)
+                    val compressions = mutableListOf<String>()
+                    for (i in 0 until compressionArray.length()) {
+                        compressions.add(compressionArray.getString(i))
+                    }
+                    if (compressions.isNotEmpty()) {
+                        Log.d(TAG, "Found supported compressions in config: $compressions")
+                        return compressions
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error reading config file ${configFile.absolutePath}", e)
+            }
+        }
+        return listOf("none")
     }
     
     /**
