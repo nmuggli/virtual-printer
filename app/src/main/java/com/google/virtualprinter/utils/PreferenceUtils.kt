@@ -33,6 +33,17 @@ object PreferenceUtils {
     
     private const val CONFIG_FILE_NAME = "printer_config.json"
     private const val KEY_CONFIG_PRINTER_NAME = "printer_name"
+    private const val KEY_CONFIG_SUPPORTED_FORMATS = "supported_formats"
+
+    private val DEFAULT_SUPPORTED_FORMATS = listOf(
+        "application/pdf",
+        "application/octet-stream",
+        "application/vnd.cups-raw",
+        "application/vnd.cups-pdf",
+        "image/jpeg",
+        "image/png",
+        "text/plain"
+    )
 
     /**
      * Gets the user-defined printer name or the default name if not set
@@ -82,6 +93,34 @@ object PreferenceUtils {
             }
         }
         return null
+    }
+
+    /**
+     * Gets the list of supported formats for the printer.
+     * Checks the configuration file first, then falls back to defaults.
+     */
+    fun getSupportedFormats(context: Context): List<String> {
+        val configFile = File(context.filesDir, CONFIG_FILE_NAME)
+        if (configFile.exists()) {
+            try {
+                val content = configFile.readText()
+                val json = JSONObject(content)
+                if (json.has(KEY_CONFIG_SUPPORTED_FORMATS)) {
+                    val formatsArray = json.getJSONArray(KEY_CONFIG_SUPPORTED_FORMATS)
+                    val formats = mutableListOf<String>()
+                    for (i in 0 until formatsArray.length()) {
+                        formats.add(formatsArray.getString(i))
+                    }
+                    if (formats.isNotEmpty()) {
+                      Log.d(TAG, "Found supported formats in config: $formats")
+                      return formats
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error reading config file ${configFile.absolutePath}", e)
+            }
+        }
+        return DEFAULT_SUPPORTED_FORMATS
     }
     
     /**

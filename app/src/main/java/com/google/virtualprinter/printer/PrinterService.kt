@@ -529,7 +529,7 @@ class PrinterService(private val context: Context) {
                             id = generateJobId().toLong(),
                             name = "Temp Job for Delay",
                             filePath = "temp",
-                            documentFormat = "application/pdf",
+                            documentFormat = PreferenceUtils.getSupportedFormats(context).firstOrNull() ?: "application/pdf",
                             size = documentData.size.toLong(),
                             submissionTime = System.currentTimeMillis(),
                             state = com.google.virtualprinter.queue.PrintJobState.PENDING
@@ -574,16 +574,7 @@ class PrinterService(private val context: Context) {
                     
                     // Check supported document formats (use custom list if provided)
                     val customSupported = getCustomAttributeValues("document-format-supported")
-                    val supportedFormats = if (customSupported.isNotEmpty()) customSupported else listOf(
-                        "application/octet-stream",
-                        "application/pdf",
-                        "application/postscript",
-                        "application/vnd.cups-pdf",
-                        "application/vnd.cups-postscript",
-                        "application/vnd.cups-raw",
-                        "image/jpeg",
-                        "image/png"
-                    )
+                    val supportedFormats = if (customSupported.isNotEmpty()) customSupported else PreferenceUtils.getSupportedFormats(context)
                     
                     if (documentFormat !in supportedFormats) {
                         Log.w(TAG, "Unsupported document format: $documentFormat")
@@ -716,7 +707,7 @@ class PrinterService(private val context: Context) {
                             ),
                             buildJobAttributes(
                                 jobId = jobId,
-                                documentFormat = "application/pdf",
+                                documentFormat = PreferenceUtils.getSupportedFormats(context).firstOrNull() ?: "application/pdf",
                                 jobState = JobState.completed,
                                 jobStateReason = "job-completed-successfully",
                                 jobName = "Print Job $jobId",
@@ -741,7 +732,7 @@ class PrinterService(private val context: Context) {
                             id = generateJobId().toLong(),
                             name = "Temp Job for Send-Document Delay",
                             filePath = "temp",
-                            documentFormat = "application/pdf",
+                            documentFormat = PreferenceUtils.getSupportedFormats(context).firstOrNull() ?: "application/pdf",
                             size = documentData.size.toLong(),
                             submissionTime = System.currentTimeMillis(),
                             state = com.google.virtualprinter.queue.PrintJobState.PENDING
@@ -1016,7 +1007,10 @@ class PrinterService(private val context: Context) {
             Log.e(TAG, "Error creating printer URI: ${e.message}")
             URI.create("ipp://127.0.0.1:$PORT/")
         }
-        
+
+        // The list of supported document formats.
+        val supportedFormats = PreferenceUtils.getSupportedFormats(context)
+
         // Create printer attributes group with all required IPP attributes
         val printerAttributes = AttributeGroup.groupOf(
             Tag.printerAttributes,
@@ -1055,17 +1049,9 @@ class PrinterService(private val context: Context) {
             Types.pdlOverrideSupported.of("not-attempted"),
             
             // Supported document formats
-            Types.documentFormatSupported.of(
-                "application/pdf", 
-                "application/octet-stream",
-                "application/vnd.cups-raw",
-                "application/vnd.cups-pdf",
-                "image/jpeg",
-                "image/png",
-                "text/plain"
-            ),
-            Types.documentFormat.of("application/pdf"),
-            Types.documentFormatDefault.of("application/pdf"),
+            Types.documentFormatSupported.of(supportedFormats),
+            Types.documentFormat.of(supportedFormats.firstOrNull() ?: "application/pdf"),
+            Types.documentFormatDefault.of(supportedFormats.firstOrNull() ?: "application/pdf"),
             
             // Media support
             Types.mediaDefault.of("iso_a4_210x297mm"),
@@ -1499,13 +1485,16 @@ class PrinterService(private val context: Context) {
                 serviceType = SERVICE_TYPE
                 port = PORT
                 
+                val supportedFormats = PreferenceUtils.getSupportedFormats(context)
+                val pdlValue = supportedFormats.joinToString(",")
+
                 // Add printer attributes as TXT records
                 val hostAddress = getLocalIpAddress() ?: "127.0.0.1"
                 val attributes = mapOf(
                     "URF" to "none",
                     "adminurl" to "http://$hostAddress:$PORT/",
                     "rp" to "ipp/print", // Resource path for IPP
-                    "pdl" to "application/pdf,image/urf",
+                    "pdl" to pdlValue,
                     "txtvers" to "1",
                     "priority" to "30",
                     "qtotal" to "1",
@@ -1789,7 +1778,7 @@ class PrinterService(private val context: Context) {
                         id = currentTime + attempt,
                         name = "Error Test Job #${attempt + 1}",
                         filePath = "test_error.pdf",
-                        documentFormat = "application/pdf",
+                        documentFormat = PreferenceUtils.getSupportedFormats(context).firstOrNull() ?: "application/pdf",
                         size = 1024L,
                         submissionTime = currentTime,
                         state = PrintJobState.PENDING,
@@ -1865,7 +1854,7 @@ class PrinterService(private val context: Context) {
                 id = currentTime,
                 name = "Delay Test Job",
                 filePath = "test.pdf",
-                documentFormat = "application/pdf",
+                documentFormat = PreferenceUtils.getSupportedFormats(context).firstOrNull() ?: "application/pdf",
                 size = 1024L,
                 submissionTime = currentTime,
                 state = PrintJobState.PENDING,
