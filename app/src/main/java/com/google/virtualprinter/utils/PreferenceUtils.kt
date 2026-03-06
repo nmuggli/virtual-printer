@@ -38,12 +38,9 @@ object PreferenceUtils {
 
     private val DEFAULT_SUPPORTED_FORMATS = listOf(
         "application/pdf",
-        "application/octet-stream",
-        "application/vnd.cups-raw",
-        "application/vnd.cups-pdf",
+        "image/pwg-raster",
+        "application/PCLm",
         "image/jpeg",
-        "image/png",
-        "text/plain"
     )
 
     /**
@@ -122,6 +119,14 @@ object PreferenceUtils {
             }
         }
         return DEFAULT_SUPPORTED_FORMATS
+    }
+
+    /**
+     * Return the default document format (the first value from supported formats, or a hard-coded
+     * default value).
+     */
+    fun getDefaultFormat(context: Context): String {
+      return getSupportedFormats(context).firstOrNull() ?: "application/pdf"
     }
 
     /**
